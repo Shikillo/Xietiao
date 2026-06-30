@@ -1,0 +1,10 @@
+# Artefactos de compilación de Rust
+/target
+
+# Datos/exports generados al usar la app
+/slate-export.md
+/slate-export.json
+/slate-import.json
+
+# Sistema
+.DS_Store

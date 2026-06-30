@@ -1,0 +1,46 @@
+# Configuración de ejemplo de Slate.
+#
+# Copia este fichero a la ruta de configuración para activarlo:
+#   macOS/Linux:  ~/.config/slate/config.toml
+#
+# Todo es opcional: lo que no definas usa los valores por defecto.
+
+# --- Tema de colores ---------------------------------------------------------
+# Cada valor admite: nombre ("cyan", "red", "lightblue"…),
+# hex ("#ff8800") o "r,g,b" ("255,165,0").
+[theme]
+focus = "cyan"            # borde/realce del panel con foco
+idle = "darkgray"         # paneles sin foco
+accent = "cyan"           # bordes de los overlays
+done = "green"            # tareas/subtareas completadas
+overdue = "red"           # tareas vencidas
+today = "255,165,0"       # tareas que vencen hoy (ámbar)
+due = "yellow"            # tareas con fecha futura
+tag = "blue"              # etiquetas #tag
+recurrence = "magenta"    # marca de recurrencia (↻)
+priority_high = "red"
+priority_medium = "yellow"
+priority_low = "blue"
+
+# --- Atajos de teclado -------------------------------------------------------
+# Reasigna acciones a teclas. El valor es la tecla (o varias separadas por
+# comas). Teclas especiales: Tab, BackTab, Enter, Space, Esc, Up, Down,
+# Left, Right, Backspace, o "ctrl+<letra>".
+#
+# Reasignar una acción ELIMINA sus teclas por defecto.
+[keys]
+# Ejemplos (descoméntalos para usarlos):
+# undo = "z"
+# down = "j,Down"
+# up = "k,Up"
+# pending = "p"
+# stats = "g"
+# trash = "T"
+# menu = "ctrl+o"
+
+# Acciones disponibles:
+#   quit, help, undo, next_panel, prev_panel, down, up, left, right,
+#   add, rename, delete, activate, assign_date, cycle_priority,
+#   cycle_recurrence, subtasks, move_todo, link_pomodoro, search,
+#   toggle_notes_scope, move_item_up, move_item_down, agenda_today,
+#   week_agenda, pending, stats, trash, menu, reset_clock, switch_pomo
