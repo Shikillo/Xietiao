@@ -1,6 +1,6 @@
 //! Configuración de usuario: tema de colores y atajos de teclado.
 //!
-//! Se lee de `<config_dir>/slate/config.toml`. Si no existe, se usan los
+//! Se lee de `<config_dir>/xietiao/config.toml`. Si no existe, se usan los
 //! valores por defecto (y la app sigue funcionando igual que siempre).
 
 use std::collections::HashMap;

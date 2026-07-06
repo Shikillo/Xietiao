@@ -1,10 +1,10 @@
-# Slate
+# Xietiao
 
-**Slate** es un dashboard de productividad en la terminal (TUI), escrito en Rust con
+**Xietiao** es un dashboard de productividad en la terminal (TUI), escrito en Rust con
 [ratatui](https://ratatui.rs). Reúne en un solo pantallazo tus proyectos, to-dos,
 notas, un calendario y temporizadores (pomodoro/cronómetro/reloj).
 
-![Interfaz de Slate](Interfaz.png)
+![Interfaz de Xietiao](Interfaz.png)
 
 ## Características
 
@@ -28,12 +28,12 @@ notas, un calendario y temporizadores (pomodoro/cronómetro/reloj).
 Necesitas [Rust](https://rustup.rs) (incluye `cargo`).
 
 ```bash
-git clone https://github.com/Shikillo/Slate.git
-cd Slate
+git clone https://github.com/Shikillo/Xietiao.git
+cd Xietiao
 cargo run --release
 ```
 
-Para instalarlo como comando del sistema (`slate` desde cualquier sitio):
+Para instalarlo como comando del sistema (`xietiao` desde cualquier sitio):
 
 ```bash
 cargo install --path .
@@ -70,17 +70,17 @@ Pulsa `?` dentro de la app para ver la ayuda completa.
 
 ## Datos y configuración
 
-Slate guarda su estado en `<config_dir>/slate/store.json`:
+Xietiao guarda su estado en `<config_dir>/xietiao/store.json`:
 
-- **macOS:** `~/Library/Application Support/slate/`
-- **Linux:** `~/.config/slate/`
-- **Windows:** `%APPDATA%\slate\`
+- **macOS:** `~/Library/Application Support/xietiao/`
+- **Linux:** `~/.config/xietiao/`
+- **Windows:** `%APPDATA%\xietiao\`
 
 Para mover tus to-dos entre equipos, usa el menú (`o`) → exportar/importar JSON.
 
 ### Personalización
 
-Copia [`config.example.toml`](config.example.toml) a `<config_dir>/slate/config.toml`
+Copia [`config.example.toml`](config.example.toml) a `<config_dir>/xietiao/config.toml`
 para cambiar el **tema de colores** y **reasignar teclas**. Todo es opcional; lo que
 no definas usa los valores por defecto.
 
@@ -103,3 +103,7 @@ Estructura:
 ---
 
 Hecho con 🦀 Rust + ratatui.
+
+## Créditos
+
+Desarrollado por [Shikillo](https://github.com/Shikillo) con la asistencia de Claude (Anthropic).

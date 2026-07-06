@@ -1,4 +1,4 @@
-//! Modelo de datos de Slate y persistencia en disco (JSON).
+//! Modelo de datos de Xietiao y persistencia en disco (JSON).
 
 use std::fs;
 use std::path::PathBuf;
@@ -250,13 +250,13 @@ pub struct Store {
 }
 
 impl Store {
-    /// Directorio base de configuración/datos: `<config_dir>/slate`.
+    /// Directorio base de configuración/datos: `<config_dir>/xietiao`.
     pub fn config_dir() -> PathBuf {
         let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        base.join("slate")
+        base.join("xietiao")
     }
 
-    /// Ruta del fichero de datos: `<config_dir>/slate/store.json`.
+    /// Ruta del fichero de datos: `<config_dir>/xietiao/store.json`.
     pub fn data_path() -> PathBuf {
         Self::config_dir().join("store.json")
     }

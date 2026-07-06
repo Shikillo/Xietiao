@@ -1,4 +1,4 @@
-//! Slate — dashboard TUI (proyectos, to-dos, notas, calendario y pomodoro).
+//! Xietiao — dashboard TUI (proyectos, to-dos, notas, calendario y pomodoro).
 
 mod app;
 mod config;

@@ -1005,7 +1005,7 @@ impl App {
     // --- Export / Import ------------------------------------------------------
 
     fn export_markdown(&mut self) {
-        let mut out = String::from("# Slate — export\n\n");
+        let mut out = String::from("# Xietiao — export\n\n");
         for p in &self.store.projects {
             out.push_str(&format!("## {}\n\n", p.name));
             for t in &p.todos {
@@ -1028,7 +1028,7 @@ impl App {
             }
             out.push('\n');
         }
-        match std::env::current_dir().map(|d| d.join("slate-export.md")) {
+        match std::env::current_dir().map(|d| d.join("xietiao-export.md")) {
             Ok(path) => match std::fs::write(&path, out) {
                 Ok(_) => self.status = format!("Exportado a {}", path.display()),
                 Err(e) => self.status = format!("Error al exportar: {e}"),
@@ -1039,7 +1039,7 @@ impl App {
 
     fn export_json(&mut self) {
         match serde_json::to_string_pretty(&self.store) {
-            Ok(json) => match std::env::current_dir().map(|d| d.join("slate-export.json")) {
+            Ok(json) => match std::env::current_dir().map(|d| d.join("xietiao-export.json")) {
                 Ok(path) => match std::fs::write(&path, json) {
                     Ok(_) => self.status = format!("Exportado a {}", path.display()),
                     Err(e) => self.status = format!("Error al exportar: {e}"),
@@ -1051,7 +1051,7 @@ impl App {
     }
 
     fn import_json(&mut self) {
-        let path = match std::env::current_dir().map(|d| d.join("slate-import.json")) {
+        let path = match std::env::current_dir().map(|d| d.join("xietiao-import.json")) {
             Ok(p) => p,
             Err(e) => {
                 self.status = format!("Error: {e}");

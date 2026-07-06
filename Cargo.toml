@@ -1,8 +1,13 @@
 [package]
-name = "slate"
+name = "xietiao"
 version = "0.1.0"
 edition = "2021"
-description = "Slate — un dashboard TUI para proyectos, to-dos, notas, calendario y pomodoro"
+description = "Xietiao — un dashboard TUI para proyectos, to-dos, notas, calendario y pomodoro"
+license = "MIT"
+repository = "https://github.com/Shikillo/Xietiao"
+readme = "README.md"
+keywords = ["tui", "productivity", "pomodoro", "todo", "dashboard"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 ratatui = "0.29"

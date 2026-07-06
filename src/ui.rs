@@ -20,7 +20,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Marco exterior de toda la app.
     let outer = Block::default()
         .borders(Borders::ALL)
-        .title(" Slate ")
+        .title(" Xietiao ")
         .title_style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
         .border_style(Style::default().fg(Color::Gray));
     let inner = outer.inner(area);
@@ -732,7 +732,7 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
     ];
 
     let mut lines: Vec<Line> = vec![Line::from(Span::styled(
-        "Atajos de Slate",
+        "Atajos de Xietiao",
         Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
     ))
     .centered()];
@@ -1136,9 +1136,9 @@ fn draw_menu(frame: &mut Frame, app: &App, area: Rect, sel: usize) {
     frame.render_widget(Clear, popup);
 
     let options = [
-        "Exportar a Markdown (slate-export.md)",
-        "Exportar datos a JSON (slate-export.json)",
-        "Importar datos desde JSON (slate-import.json)",
+        "Exportar a Markdown (xietiao-export.md)",
+        "Exportar datos a JSON (xietiao-export.json)",
+        "Importar datos desde JSON (xietiao-import.json)",
     ];
     let items: Vec<ListItem> = options
         .iter()

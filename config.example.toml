@@ -1,7 +1,7 @@
-# Configuración de ejemplo de Slate.
+# Configuración de ejemplo de Xietiao.
 #
 # Copia este fichero a la ruta de configuración para activarlo:
-#   macOS/Linux:  ~/.config/slate/config.toml
+#   macOS/Linux:  ~/.config/xietiao/config.toml
 #
 # Todo es opcional: lo que no definas usa los valores por defecto.
 
