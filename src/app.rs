@@ -1,5 +1,6 @@
 //! Estado de la aplicación y lógica de interacción.
 
+use std::sync::mpsc;
 use std::time::Duration;
 
 use chrono::{Datelike, Local, NaiveDate};
@@ -8,6 +9,7 @@ use crate::config::{key_to_string, Action, Config, Theme};
 use crate::model::{
     PomodoroSession, Project, Recurrence, Store, Subtask, Todo, TrashItem, TrashKind,
 };
+use crate::todoist;
 
 /// Vista superpuesta a pantalla (completa o parcial) sobre el dashboard.
 #[derive(Debug, Clone)]
@@ -16,8 +18,8 @@ pub enum Overlay {
     None,
     /// Ayuda con los atajos.
     Help,
-    /// Agenda de un día concreto.
-    Agenda(NaiveDate),
+    /// Agenda de un día concreto, con selección para saltar a una tarea.
+    Agenda { date: NaiveDate, sel: usize },
     /// Selector de proyecto destino para mover el to-do actual.
     MoveTodo { sel: usize },
     /// Editor de subtareas del to-do actual.
@@ -83,6 +85,10 @@ pub enum InputMode {
     EditNotes,
     EditProject,
     EditTodo,
+    /// Fecha de la tarea escrita a mano (vacío = quitar la fecha).
+    SetDate,
+    /// Token de API de Todoist (vacío = borrar el token).
+    TodoistToken,
     Search,
 }
 
@@ -219,6 +225,19 @@ impl ClockSel {
     }
 }
 
+/// Resultado de una sincronización con Todoist, enviado desde el hilo de red.
+pub struct TodoistOutcome {
+    /// Tareas creadas en Todoist: (proyecto, tarea, id remota, título).
+    /// El título permite recolocar la id si la tarea se movió mientras tanto.
+    created: Vec<(usize, usize, String, String)>,
+    /// Ids remotas de tareas ya exportadas que están completadas en Todoist.
+    remote_done: Vec<String>,
+    /// Pendientes que ya estaban exportadas y se han saltado.
+    skipped: usize,
+    /// Si algo falló a medias, el mensaje (lo ya hecho cuenta igualmente).
+    error: Option<String>,
+}
+
 /// Estado global de la aplicación.
 pub struct App {
     pub store: Store,
@@ -251,6 +270,8 @@ pub struct App {
     pub pomodoro_link: Option<(usize, usize)>,
     /// Configuración de usuario (tema y atajos).
     pub config: Config,
+    /// Sincronización con Todoist en curso: receptor del hilo de red.
+    todoist_sync: Option<mpsc::Receiver<TodoistOutcome>>,
     pub should_quit: bool,
     pub status: String,
 }
@@ -281,6 +302,7 @@ impl App {
             since_save: Duration::ZERO,
             pomodoro_link: None,
             config: Config::load(),
+            todoist_sync: None,
             should_quit: false,
             status: "Tab: panel · a: añadir · e: editar · /: buscar · t: hoy · ?: ayuda · q: salir"
                 .into(),
@@ -397,6 +419,19 @@ impl App {
         out
     }
 
+    /// Como `agenda_items`, pero con índices (proyecto, tarea) para poder saltar.
+    pub fn agenda_items_idx(&self, date: NaiveDate) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for (pi, project) in self.store.projects.iter().enumerate() {
+            for (ti, todo) in project.todos.iter().enumerate() {
+                if todo.date == Some(date) {
+                    out.push((pi, ti));
+                }
+            }
+        }
+        out
+    }
+
     // --- Notas ----------------------------------------------------------------
 
     /// Si el ámbito es Proyecto pero no hay ninguno, se comporta como General.
@@ -502,6 +537,37 @@ impl App {
         }
     }
 
+    /// Mueve el calendario un mes adelante o atrás, ajustando el día del cursor
+    /// si el mes destino es más corto (como los botones ◀ ▶ del escritorio).
+    fn shift_month(&mut self, delta: i32) {
+        let (mut y, mut m) = (
+            self.calendar_cursor.year(),
+            self.calendar_cursor.month() as i32,
+        );
+        m += delta;
+        if m < 1 {
+            m = 12;
+            y -= 1;
+        } else if m > 12 {
+            m = 1;
+            y += 1;
+        }
+        let last = crate::model::days_in_month(y, m as u32);
+        let day = self.calendar_cursor.day().min(last);
+        if let Some(d) = NaiveDate::from_ymd_opt(y, m as u32, day) {
+            self.calendar_cursor = d;
+            self.calendar_anchor = NaiveDate::from_ymd_opt(y, m as u32, 1).unwrap();
+        }
+    }
+
+    /// Devuelve el calendario a hoy (como el botón «hoy» del escritorio).
+    fn calendar_today(&mut self) {
+        let today = Local::now().date_naive();
+        self.calendar_cursor = today;
+        self.calendar_anchor = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap();
+        self.status = "Calendario en hoy".into();
+    }
+
     /// Asigna (o desasigna, si ya estaba) el to-do seleccionado al día del cursor.
     fn assign_todo_date(&mut self) {
         let date = self.calendar_cursor;
@@ -535,35 +601,19 @@ impl App {
         };
         self.record();
         let today = Local::now().date_naive();
-        let mut regen: Option<(usize, Todo)> = None;
         if let Some(project) = self.store.projects.get_mut(self.project_idx) {
-            if let Some(todo) = project.todos.get_mut(actual) {
-                todo.done = !todo.done;
-                if todo.done {
-                    todo.completed_at = Some(today);
-                    // Si es recurrente, prepara la siguiente aparición.
-                    if todo.recurrence != Recurrence::None {
-                        let base = todo.date.unwrap_or(today);
-                        if let Some(next) = todo.recurrence.next_date(base) {
-                            let mut copy = todo.clone();
-                            copy.done = false;
-                            copy.completed_at = None;
-                            copy.date = Some(next);
-                            for s in &mut copy.subtasks {
-                                s.done = false;
-                            }
-                            regen = Some((actual + 1, copy));
-                        }
-                    }
-                } else {
+            match project.todos.get(actual).map(|t| t.done) {
+                Some(true) => {
+                    let todo = &mut project.todos[actual];
+                    todo.done = false;
                     todo.completed_at = None;
                 }
-            }
-        }
-        if let Some((pos, copy)) = regen {
-            if let Some(project) = self.store.projects.get_mut(self.project_idx) {
-                project.todos.insert(pos.min(project.todos.len()), copy);
-                self.status = "Tarea recurrente regenerada para la próxima fecha".into();
+                Some(false) => {
+                    if complete_todo(project, actual, today) {
+                        self.status = "Tarea recurrente regenerada para la próxima fecha".into();
+                    }
+                }
+                None => {}
             }
         }
         self.save();
@@ -727,6 +777,20 @@ impl App {
         }
     }
 
+    /// Abre el popup para escribir la fecha de la tarea seleccionada a mano
+    /// (equivalente al selector de fecha del escritorio; vacío = quitar fecha).
+    fn start_set_date(&mut self) {
+        let Some(actual) = self.selected_todo_actual() else {
+            self.status = "No hay tarea seleccionada".into();
+            return;
+        };
+        let current = self.store.projects[self.project_idx].todos[actual].date;
+        self.input = current
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default();
+        self.mode = InputMode::SetDate;
+    }
+
     fn start_search(&mut self) {
         self.mode = InputMode::Search;
         self.todo_idx = 0;
@@ -802,6 +866,49 @@ impl App {
                         }
                     }
                 }
+            }
+            InputMode::SetDate => {
+                if let Some(actual) = self.selected_todo_actual() {
+                    let parsed = if text.is_empty() {
+                        Ok(None)
+                    } else {
+                        NaiveDate::parse_from_str(&text, "%Y-%m-%d")
+                            .or_else(|_| NaiveDate::parse_from_str(&text, "%d/%m/%Y"))
+                            .map(Some)
+                    };
+                    match parsed {
+                        Ok(date) => {
+                            if let Some(t) = self
+                                .store
+                                .projects
+                                .get_mut(self.project_idx)
+                                .and_then(|p| p.todos.get_mut(actual))
+                            {
+                                t.date = date;
+                                self.save();
+                                self.status = match date {
+                                    Some(d) => {
+                                        format!("Tarea asignada a {}", d.format("%d/%m/%Y"))
+                                    }
+                                    None => "Fecha quitada de la tarea".into(),
+                                };
+                            }
+                        }
+                        Err(_) => {
+                            self.status =
+                                "Fecha no válida: usa AAAA-MM-DD o DD/MM/AAAA".into();
+                        }
+                    }
+                }
+            }
+            InputMode::TodoistToken => {
+                self.store.todoist_token = (!text.is_empty()).then(|| text.clone());
+                self.save();
+                self.status = if self.store.todoist_token.is_some() {
+                    "Token de Todoist guardado".into()
+                } else {
+                    "Token de Todoist borrado".into()
+                };
             }
             InputMode::Search | InputMode::Normal => {}
         }
@@ -977,6 +1084,17 @@ impl App {
         self.status = format!("Pomodoro vinculado a «{title}»");
     }
 
+    /// Título de la tarea vinculada al pomodoro, si el vínculo sigue siendo válido.
+    pub fn pomodoro_link_title(&self) -> Option<&str> {
+        let (pi, ti) = self.pomodoro_link?;
+        self.store
+            .projects
+            .get(pi)?
+            .todos
+            .get(ti)
+            .map(|t| t.title.as_str())
+    }
+
     /// Etiquetas (proyecto, tarea) para registrar un foco completado.
     fn pomodoro_labels(&self) -> (Option<String>, Option<String>) {
         if let Some((pi, ti)) = self.pomodoro_link {
@@ -1000,6 +1118,162 @@ impl App {
                 .arg("/System/Library/Sounds/Glass.aiff")
                 .spawn();
         }
+    }
+
+    // --- Todoist ----------------------------------------------------------------
+
+    /// Abre el popup para pegar (o borrar, dejándolo vacío) el token de Todoist.
+    fn start_todoist_token(&mut self) {
+        self.input = self.store.todoist_token.clone().unwrap_or_default();
+        self.mode = InputMode::TodoistToken;
+    }
+
+    /// Lanza la sincronización con Todoist en un hilo aparte: envía las
+    /// pendientes aún no exportadas y trae las completadas allí. El resultado
+    /// se recoge en `tick()` sin congelar la interfaz.
+    fn start_todoist_sync(&mut self) {
+        if self.todoist_sync.is_some() {
+            self.status = "Ya hay una sincronización con Todoist en curso".into();
+            return;
+        }
+        let Some(token) = self.store.todoist_token.clone() else {
+            // Como en escritorio: sin token, se abre primero la configuración.
+            self.start_todoist_token();
+            return;
+        };
+
+        // Recoge lo pendiente; el hilo no toca el store.
+        let mut outgoing = Vec::new();
+        let mut known_ids = Vec::new();
+        for (pi, p) in self.store.projects.iter().enumerate() {
+            for (ti, t) in p.todos.iter().enumerate() {
+                if t.done {
+                    continue;
+                }
+                if let Some(id) = &t.todoist_id {
+                    known_ids.push(id.clone());
+                    continue;
+                }
+                outgoing.push(todoist::Outgoing {
+                    project: pi,
+                    todo: ti,
+                    project_name: p.name.clone(),
+                    content: t.title.clone(),
+                    due_date: t.date.map(|d| d.to_string()),
+                    priority: todoist::priority(t.priority),
+                    labels: t.tags.clone(),
+                });
+            }
+        }
+        if outgoing.is_empty() && known_ids.is_empty() {
+            self.status = "Nada que sincronizar con Todoist".into();
+            return;
+        }
+        let skipped = known_ids.len();
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            // Vuelta: qué tareas ya exportadas se han completado en Todoist.
+            let (remote_done, pull_error) = if known_ids.is_empty() {
+                (Vec::new(), None)
+            } else {
+                todoist::fetch_completed(&token, &known_ids)
+            };
+            // Ida: crea en Todoist lo que aún no está.
+            let (created, push_error) = if outgoing.is_empty() {
+                (Vec::new(), None)
+            } else {
+                todoist::export(&token, &outgoing)
+            };
+            // `export` crea en orden, así que la k-ésima creada es la k-ésima
+            // saliente: se le adjunta el título para poder verificarla luego.
+            let created = created
+                .into_iter()
+                .zip(outgoing.iter())
+                .map(|((pi, ti, id), o)| (pi, ti, id, o.content.clone()))
+                .collect();
+            let _ = tx.send(TodoistOutcome {
+                created,
+                remote_done,
+                skipped,
+                error: push_error.or(pull_error),
+            });
+        });
+        self.todoist_sync = Some(rx);
+        self.status = "Sincronizando con Todoist…".into();
+    }
+
+    /// Aplica el resultado de la sincronización: registra las ids remotas de
+    /// lo creado (aunque haya fallado a medias, para no duplicarlo después) y
+    /// marca lo completado en Todoist. No pasa por la pila de deshacer: undo
+    /// borraría las ids y el siguiente sync duplicaría tareas.
+    fn apply_todoist(&mut self, outcome: TodoistOutcome) {
+        let exported = outcome.created.len();
+        for (pi, ti, id, title) in outcome.created {
+            // Misma posición y mismo título: caso normal.
+            let direct = self
+                .store
+                .projects
+                .get(pi)
+                .and_then(|p| p.todos.get(ti))
+                .is_some_and(|t| t.title == title && t.todoist_id.is_none());
+            if direct {
+                self.store.projects[pi].todos[ti].todoist_id = Some(id);
+                continue;
+            }
+            // La tarea se movió/reordenó durante la sincronización: por título.
+            'search: for p in &mut self.store.projects {
+                for t in &mut p.todos {
+                    if t.todoist_id.is_none() && t.title == title {
+                        t.todoist_id = Some(id);
+                        break 'search;
+                    }
+                }
+            }
+        }
+
+        // Completa por id remota: las inserciones de recurrentes mueven índices.
+        let today = Local::now().date_naive();
+        let mut completed = 0;
+        for id in &outcome.remote_done {
+            let mut found = None;
+            for (pi, p) in self.store.projects.iter().enumerate() {
+                if let Some(ti) = p
+                    .todos
+                    .iter()
+                    .position(|t| !t.done && t.todoist_id.as_deref() == Some(id.as_str()))
+                {
+                    found = Some((pi, ti));
+                    break;
+                }
+            }
+            if let Some((pi, ti)) = found {
+                complete_todo(&mut self.store.projects[pi], ti, today);
+                completed += 1;
+            }
+        }
+
+        if exported > 0 || completed > 0 {
+            self.clamp_indices();
+            self.save();
+        }
+
+        let mut parts = Vec::new();
+        if exported > 0 {
+            parts.push(format!("{exported} enviadas a Todoist"));
+        }
+        if completed > 0 {
+            parts.push(format!("{completed} completadas desde Todoist"));
+        }
+        let summary = if parts.is_empty() {
+            format!("Nada nuevo ({} ya estaban en Todoist)", outcome.skipped)
+        } else {
+            parts.join(", ")
+        };
+        self.status = match outcome.error {
+            Some(e) => format!("Todoist: {e} ({summary})"),
+            None => summary,
+        };
     }
 
     // --- Export / Import ------------------------------------------------------
@@ -1086,8 +1360,32 @@ impl App {
         match self.overlay.clone() {
             Overlay::None => {}
             // Vistas informativas: cualquier tecla las cierra.
-            Overlay::Help | Overlay::Agenda(_) | Overlay::Stats => {
+            Overlay::Help | Overlay::Stats => {
                 self.overlay = Overlay::None;
+            }
+            // Agenda: navegable, con salto directo a la tarea (como en escritorio).
+            Overlay::Agenda { date, sel } => {
+                let items = self.agenda_items_idx(date);
+                let n = items.len();
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') if n > 0 => {
+                        self.overlay = Overlay::Agenda {
+                            date,
+                            sel: sel.saturating_sub(1),
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') if n > 0 => {
+                        self.overlay = Overlay::Agenda {
+                            date,
+                            sel: (sel + 1).min(n.saturating_sub(1)),
+                        }
+                    }
+                    KeyCode::Enter => match items.get(sel) {
+                        Some(&(pi, ti)) => self.jump_to_todo(pi, ti),
+                        None => self.overlay = Overlay::None,
+                    },
+                    _ => self.overlay = Overlay::None,
+                }
             }
             Overlay::WeekAgenda { anchor } => match key.code {
                 KeyCode::Left | KeyCode::Char('h') => {
@@ -1225,7 +1523,7 @@ impl App {
                 }
             }
             Overlay::Menu { sel } => {
-                const N: usize = 3;
+                const N: usize = 5;
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') => {
                         self.overlay = Overlay::Menu {
@@ -1238,12 +1536,14 @@ impl App {
                         }
                     }
                     KeyCode::Enter => {
+                        self.overlay = Overlay::None;
                         match sel {
                             0 => self.export_markdown(),
                             1 => self.export_json(),
-                            _ => self.import_json(),
+                            2 => self.import_json(),
+                            3 => self.start_todoist_token(),
+                            _ => self.start_todoist_sync(),
                         }
-                        self.overlay = Overlay::None;
                     }
                     _ if close => self.overlay = Overlay::None,
                     _ => {}
@@ -1401,7 +1701,12 @@ impl App {
                 Focus::Todos => self.toggle_todo(),
                 Focus::Notes => self.start_edit_notes(),
                 Focus::Timer => self.toggle_selected_clock(),
-                Focus::Calendar => self.overlay = Overlay::Agenda(self.calendar_cursor),
+                Focus::Calendar => {
+                    self.overlay = Overlay::Agenda {
+                        date: self.calendar_cursor,
+                        sel: 0,
+                    }
+                }
                 _ => {}
             },
             AssignDate => {
@@ -1409,6 +1714,15 @@ impl App {
                     self.assign_todo_date();
                 }
             }
+            SetDate => {
+                if self.focus == Focus::Todos {
+                    self.start_set_date();
+                }
+            }
+            PrevMonth => self.shift_month(-1),
+            NextMonth => self.shift_month(1),
+            CalendarToday => self.calendar_today(),
+            TodoistSync => self.start_todoist_sync(),
             CyclePriority => {
                 if self.focus == Focus::Todos {
                     self.cycle_priority();
@@ -1446,7 +1760,12 @@ impl App {
             }
             MoveItemUp => self.move_item(-1),
             MoveItemDown => self.move_item(1),
-            AgendaToday => self.overlay = Overlay::Agenda(Local::now().date_naive()),
+            AgendaToday => {
+                self.overlay = Overlay::Agenda {
+                    date: Local::now().date_naive(),
+                    sel: 0,
+                }
+            }
             WeekAgenda => {
                 self.overlay = Overlay::WeekAgenda {
                     anchor: monday_of(Local::now().date_naive()),
@@ -1471,6 +1790,21 @@ impl App {
 
     /// Avanza el reloj del temporizador.
     pub fn tick(&mut self, elapsed: Duration) {
+        // Recoge el resultado de la sincronización con Todoist, si terminó.
+        if let Some(rx) = &self.todoist_sync {
+            match rx.try_recv() {
+                Ok(outcome) => {
+                    self.todoist_sync = None;
+                    self.apply_todoist(outcome);
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.todoist_sync = None;
+                    self.status = "Todoist: la sincronización falló".into();
+                }
+            }
+        }
+
         self.stopwatch.tick(elapsed);
         if self.timer.tick(elapsed) {
             let was_break = self.timer.on_break;
@@ -1498,6 +1832,38 @@ impl App {
             self.save();
             self.since_save = Duration::ZERO;
         }
+    }
+}
+
+/// Marca una tarea como hecha. Si es recurrente, genera la siguiente
+/// aparición justo debajo (misma lógica que la versión de escritorio).
+/// Devuelve true si se regeneró una aparición nueva.
+fn complete_todo(project: &mut Project, todo: usize, today: NaiveDate) -> bool {
+    let mut regen: Option<(usize, Todo)> = None;
+    if let Some(t) = project.todos.get_mut(todo) {
+        t.done = true;
+        t.completed_at = Some(today);
+        if t.recurrence != Recurrence::None {
+            let base = t.date.unwrap_or(today);
+            if let Some(next) = t.recurrence.next_date(base) {
+                let mut copy = t.clone();
+                copy.done = false;
+                copy.completed_at = None;
+                copy.date = Some(next);
+                copy.todoist_id = None; // la nueva aparición aún no está en Todoist
+                for sub in &mut copy.subtasks {
+                    sub.done = false;
+                }
+                regen = Some((todo + 1, copy));
+            }
+        }
+    }
+    match regen {
+        Some((pos, copy)) => {
+            project.todos.insert(pos.min(project.todos.len()), copy);
+            true
+        }
+        None => false,
     }
 }
 

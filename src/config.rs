@@ -30,6 +30,7 @@ pub enum Action {
     Delete,
     Activate,
     AssignDate,
+    SetDate,
     CyclePriority,
     CycleRecurrence,
     Subtasks,
@@ -47,6 +48,10 @@ pub enum Action {
     Menu,
     ResetClock,
     SwitchPomo,
+    PrevMonth,
+    NextMonth,
+    CalendarToday,
+    TodoistSync,
 }
 
 impl Action {
@@ -68,6 +73,7 @@ impl Action {
             "delete" => Delete,
             "activate" => Activate,
             "assign_date" => AssignDate,
+            "set_date" => SetDate,
             "cycle_priority" => CyclePriority,
             "cycle_recurrence" => CycleRecurrence,
             "subtasks" => Subtasks,
@@ -85,6 +91,10 @@ impl Action {
             "menu" => Menu,
             "reset_clock" => ResetClock,
             "switch_pomo" => SwitchPomo,
+            "prev_month" => PrevMonth,
+            "next_month" => NextMonth,
+            "calendar_today" => CalendarToday,
+            "todoist_sync" => TodoistSync,
             _ => return None,
         })
     }
@@ -115,6 +125,7 @@ fn default_bindings() -> Vec<(&'static str, Action)> {
         ("Enter", Activate),
         ("Space", Activate),
         ("f", AssignDate),
+        ("D", SetDate),
         ("p", CyclePriority),
         ("R", CycleRecurrence),
         ("s", Subtasks),
@@ -132,6 +143,10 @@ fn default_bindings() -> Vec<(&'static str, Action)> {
         ("o", Menu),
         ("r", ResetClock),
         ("b", SwitchPomo),
+        ("[", PrevMonth),
+        ("]", NextMonth),
+        ("T", CalendarToday),
+        ("y", TodoistSync),
     ]
 }
 

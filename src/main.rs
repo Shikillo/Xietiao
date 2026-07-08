@@ -3,6 +3,7 @@
 mod app;
 mod config;
 mod model;
+mod todoist;
 mod ui;
 
 use std::io;

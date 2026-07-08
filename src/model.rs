@@ -144,6 +144,9 @@ pub struct Todo {
     /// Fecha en la que se completó por última vez (para estadísticas/racha).
     #[serde(default)]
     pub completed_at: Option<NaiveDate>,
+    /// Id de la tarea en Todoist, si ya se exportó (para no duplicarla).
+    #[serde(default)]
+    pub todoist_id: Option<String>,
 }
 
 impl Todo {
@@ -157,6 +160,7 @@ impl Todo {
             tags: Vec::new(),
             recurrence: Recurrence::None,
             completed_at: None,
+            todoist_id: None,
         }
     }
 
@@ -247,6 +251,9 @@ pub struct Store {
     /// Historial de pomodoros completados.
     #[serde(default)]
     pub pomodoros: Vec<PomodoroSession>,
+    /// Token de API de Todoist, si el usuario ha conectado su cuenta.
+    #[serde(default)]
+    pub todoist_token: Option<String>,
 }
 
 impl Store {

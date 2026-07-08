@@ -35,12 +35,13 @@ priority_low = "blue"
 # up = "k,Up"
 # pending = "p"
 # stats = "g"
-# trash = "T"
+# trash = "X"
 # menu = "ctrl+o"
 
 # Acciones disponibles:
 #   quit, help, undo, next_panel, prev_panel, down, up, left, right,
-#   add, rename, delete, activate, assign_date, cycle_priority,
+#   add, rename, delete, activate, assign_date, set_date, cycle_priority,
 #   cycle_recurrence, subtasks, move_todo, link_pomodoro, search,
 #   toggle_notes_scope, move_item_up, move_item_down, agenda_today,
-#   week_agenda, pending, stats, trash, menu, reset_clock, switch_pomo
+#   week_agenda, pending, stats, trash, menu, reset_clock, switch_pomo,
+#   prev_month, next_month, calendar_today, todoist_sync

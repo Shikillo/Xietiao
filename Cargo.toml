@@ -1,6 +1,6 @@
 [package]
 name = "xietiao"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Xietiao — un dashboard TUI para proyectos, to-dos, notas, calendario y pomodoro"
 license = "MIT"
@@ -17,3 +17,4 @@ serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 toml = "0.8"
+ureq = { version = "2", features = ["json"] }

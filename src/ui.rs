@@ -45,7 +45,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     match &app.overlay {
         Overlay::None => {}
         Overlay::Help => draw_help(frame, app.theme(), area),
-        Overlay::Agenda(date) => draw_agenda(frame, app, area, *date),
+        Overlay::Agenda { date, sel } => draw_agenda(frame, app, area, *date, *sel),
         Overlay::MoveTodo { sel } => draw_move_todo(frame, app, area, *sel),
         Overlay::Subtasks { sel } => draw_subtasks(frame, app, area, *sel),
         Overlay::Pending { sel } => draw_pending(frame, app, area, *sel),
@@ -63,6 +63,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
             | InputMode::AddSubtask
             | InputMode::EditProject
             | InputMode::EditTodo
+            | InputMode::SetDate
+            | InputMode::TodoistToken
     ) {
         draw_input_popup(frame, app, area);
     }
@@ -274,7 +276,27 @@ fn draw_todos(frame: &mut Frame, app: &App, area: Rect) {
                 ));
             }
 
-            ListItem::new(Line::from(spans))
+            // Subtareas tabuladas bajo su tarea (como en la versión de escritorio).
+            let mut lines = vec![Line::from(spans)];
+            for s in &t.subtasks {
+                let (mark, style) = if s.done {
+                    (
+                        "[x] ",
+                        Style::default()
+                            .fg(theme.done)
+                            .add_modifier(Modifier::CROSSED_OUT),
+                    )
+                } else {
+                    ("[ ] ", Style::default().fg(Color::Gray))
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("      "),
+                    Span::styled(mark, style),
+                    Span::styled(s.title.clone(), style),
+                ]));
+            }
+
+            ListItem::new(Text::from(lines))
         })
         .collect();
 
@@ -340,18 +362,22 @@ fn draw_calendar(frame: &mut Frame, app: &App, area: Rect) {
         let date = NaiveDate::from_ymd_opt(year, month, day);
         let is_today = today.year() == year && today.month() == month && today.day() == day;
         let is_cursor = date == Some(app.calendar_cursor);
-        let (has_todos, has_overdue) = date
+        // Carga del día contando TODOS los proyectos (como en escritorio).
+        let (has_todos, has_overdue, pending) = date
             .map(|d| {
-                app.current_project()
-                    .map(|p| {
-                        let any = p.todos.iter().any(|t| t.date == Some(d));
-                        let overdue =
-                            d < today && p.todos.iter().any(|t| t.date == Some(d) && !t.done);
-                        (any, overdue)
-                    })
-                    .unwrap_or((false, false))
+                let mut any = false;
+                let mut pending = 0usize;
+                for t in app.store.projects.iter().flat_map(|p| p.todos.iter()) {
+                    if t.date == Some(d) {
+                        any = true;
+                        if !t.done {
+                            pending += 1;
+                        }
+                    }
+                }
+                (any, d < today && pending > 0, pending)
             })
-            .unwrap_or((false, false));
+            .unwrap_or((false, false, 0));
 
         // Estilo del día combinando: tareas, vencidas, hoy y cursor.
         let theme = app.theme();
@@ -372,7 +398,11 @@ fn draw_calendar(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
 
-        let cell = center_in(&day.to_string(), col_w);
+        // Puntos de carga junto al número, si caben en la celda (máx. 3).
+        let day_s = day.to_string();
+        let avail = col_w.saturating_sub(day_s.len() + 1);
+        let dots = "•".repeat(pending.min(avail).min(3));
+        let cell = center_in(&format!("{day_s}{dots}"), col_w);
         spans.push(Span::styled(cell, style));
         col += 1;
         if col == 7 {
@@ -424,6 +454,11 @@ fn draw_clocks(frame: &mut Frame, app: &App, area: Rect) {
     let base = if app.timer.on_break { "break" } else { "foco" };
     let today_count = app.store.pomodoros_on(Local::now().date_naive());
     let pomo_sub = format!("{base} · {today_count} hoy");
+    // Vínculo visible: tarea vinculada, o proyecto donde se registrará el foco.
+    let pomo_link = match app.pomodoro_link_title() {
+        Some(title) => Some(format!("→ {title}")),
+        None => app.current_project().map(|p| format!("reg: {}", p.name)),
+    };
     clock_box(
         frame,
         theme,
@@ -432,6 +467,7 @@ fn draw_clocks(frame: &mut Frame, app: &App, area: Rect) {
         &app.timer.label(),
         pomo_color,
         Some(&pomo_sub),
+        pomo_link.as_deref(),
         focused && app.clock_sel == ClockSel::Pomodoro,
     );
 
@@ -444,6 +480,7 @@ fn draw_clocks(frame: &mut Frame, app: &App, area: Rect) {
         "reloj",
         &now,
         Color::White,
+        None,
         None,
         focused && app.clock_sel == ClockSel::Reloj,
     );
@@ -462,11 +499,14 @@ fn draw_clocks(frame: &mut Frame, app: &App, area: Rect) {
         &app.stopwatch.label(),
         crono_color,
         None,
+        None,
         focused && app.clock_sel == ClockSel::Cronometro,
     );
 }
 
-/// Dibuja una caja pequeña de reloj con su título, valor y un subtítulo opcional.
+/// Dibuja una caja pequeña de reloj con su título, valor y hasta dos
+/// subtítulos opcionales (el segundo se omite si no hay altura).
+#[allow(clippy::too_many_arguments)]
 fn clock_box(
     frame: &mut Frame,
     theme: &Theme,
@@ -475,6 +515,7 @@ fn clock_box(
     value: &str,
     value_color: Color,
     subtitle: Option<&str>,
+    subtitle2: Option<&str>,
     selected: bool,
 ) {
     let block = panel(theme, title, selected);
@@ -499,6 +540,17 @@ fn clock_box(
             ))
             .centered(),
         );
+    }
+    if let Some(sub) = subtitle2 {
+        if (inner.height as usize) > content.len() {
+            content.push(
+                Line::from(Span::styled(
+                    sub.to_string(),
+                    Style::default().fg(Color::DarkGray),
+                ))
+                .centered(),
+            );
+        }
     }
 
     let top_pad = (inner.height as usize).saturating_sub(content.len()) / 2;
@@ -631,7 +683,9 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let overlay_hint = match &app.overlay {
         Overlay::None => None,
         Overlay::Help => Some("Ayuda · pulsa cualquier tecla para cerrar".to_string()),
-        Overlay::Agenda(_) => Some("Agenda · pulsa cualquier tecla para cerrar".to_string()),
+        Overlay::Agenda { .. } => {
+            Some("Agenda · ↑↓ · Enter: ir a la tarea · Esc: cerrar".to_string())
+        }
         Overlay::MoveTodo { .. } => {
             Some("Mover tarea · ↑↓: elegir · Enter: mover · Esc: cancelar".to_string())
         }
@@ -669,6 +723,14 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
             }
             InputMode::EditProject => "Renombrar proyecto · Enter: ok · Esc: cancelar".to_string(),
             InputMode::EditTodo => "Renombrar tarea · Enter: ok · Esc: cancelar".to_string(),
+            InputMode::SetDate => {
+                "Fecha · AAAA-MM-DD o DD/MM/AAAA · vacío: quitar · Enter: ok · Esc: cancelar"
+                    .to_string()
+            }
+            InputMode::TodoistToken => {
+                "Token de Todoist (Configuración → Integraciones → Desarrollador) · vacío: borrar"
+                    .to_string()
+            }
             InputMode::Search => format!("Buscar: {}▌ · Enter: aplicar · Esc: limpiar", app.search),
             InputMode::Normal => app.status.clone(),
         }
@@ -685,6 +747,8 @@ fn draw_input_popup(frame: &mut Frame, app: &App, area: Rect) {
         InputMode::AddSubtask => " nueva subtarea ",
         InputMode::EditProject => " renombrar proyecto ",
         InputMode::EditTodo => " renombrar tarea ",
+        InputMode::SetDate => " fecha (AAAA-MM-DD · vacío: quitar) ",
+        InputMode::TodoistToken => " token de Todoist (vacío: borrar) ",
         _ => " ",
     };
     let popup = centered_rect(50, area, 3);
@@ -694,7 +758,12 @@ fn draw_input_popup(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .title(title)
         .border_style(Style::default().fg(app.theme().accent));
-    let mut text = app.input.clone();
+    // El token se muestra enmascarado, como un campo de contraseña.
+    let mut text = if app.mode == InputMode::TodoistToken {
+        "•".repeat(app.input.chars().count())
+    } else {
+        app.input.clone()
+    };
     text.push('▌');
     let p = Paragraph::new(text).block(block);
     frame.render_widget(p, popup);
@@ -715,6 +784,7 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
         ("u", "deshacer último cambio"),
         ("Espacio / Enter", "marcar tarea · play relojes · editar notas"),
         ("f", "asignar tarea al día del cursor (calendario)"),
+        ("D", "escribir fecha de la tarea (vacío: quitar)"),
         ("p / R", "prioridad · recurrencia de la tarea"),
         ("s", "editar subtareas de la tarea"),
         ("m", "mover la tarea a otro proyecto"),
@@ -723,9 +793,11 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
         ("/", "buscar / filtrar (admite #tag)"),
         ("g", "notas del proyecto ↔ generales"),
         ("t / w", "agenda de hoy · de la semana"),
+        ("[ ] / T", "mes anterior/siguiente · hoy (calendario)"),
         ("P", "todas las tareas pendientes"),
         ("S", "estadísticas y racha"),
-        ("x / o", "papelera · menú (export/import)"),
+        ("x / o", "papelera · menú (export/import/Todoist)"),
+        ("y", "sincronizar con Todoist"),
         ("r / b", "reset · foco↔break (relojes)"),
         ("? ", "mostrar esta ayuda"),
         ("q", "salir"),
@@ -757,21 +829,32 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
 }
 
 /// Overlay con la agenda de un día (tareas de todos los proyectos).
-fn draw_agenda(frame: &mut Frame, app: &App, area: Rect, date: NaiveDate) {
+/// Navegable: Enter salta a la tarea seleccionada (como en escritorio).
+fn draw_agenda(frame: &mut Frame, app: &App, area: Rect, date: NaiveDate, sel: usize) {
     let popup = centered_rect_pct(60, 60, area);
     frame.render_widget(Clear, popup);
 
     let items = app.agenda_items(date);
     let today = Local::now().date_naive();
 
-    let mut lines: Vec<Line> = Vec::new();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" agenda · {} ", date.format("%d/%m/%Y")))
+        .title_style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+        .border_style(Style::default().fg(app.theme().accent));
+
     if items.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "Sin tareas asignadas a este día.",
-            Style::default().fg(Color::DarkGray),
-        )));
-    } else {
-        for (proj, t) in items {
+        let p = Paragraph::new("Sin tareas asignadas a este día.")
+            .style(Style::default().fg(Color::DarkGray))
+            .block(block)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(p, popup);
+        return;
+    }
+
+    let list_items: Vec<ListItem> = items
+        .iter()
+        .map(|(proj, t)| {
             let mark_style = if t.done {
                 Style::default().fg(Color::Green)
             } else if date < today {
@@ -784,23 +867,21 @@ fn draw_agenda(frame: &mut Frame, app: &App, area: Rect, date: NaiveDate) {
                 title_style = title_style.add_modifier(Modifier::CROSSED_OUT);
             }
             let mark = if t.done { "[x] " } else { "[ ] " };
-            lines.push(Line::from(vec![
+            ListItem::new(Line::from(vec![
                 Span::styled(mark, mark_style),
                 Span::styled(t.title.clone(), title_style),
                 Span::styled(format!("  ({proj})"), Style::default().fg(Color::DarkGray)),
-            ]));
-        }
-    }
+            ]))
+        })
+        .collect();
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" agenda · {} ", date.format("%d/%m/%Y")))
-        .title_style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
-        .border_style(Style::default().fg(app.theme().accent));
-    let p = Paragraph::new(Text::from(lines))
+    let list = List::new(list_items)
         .block(block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(p, popup);
+        .highlight_style(highlight_style(app.theme(), true))
+        .highlight_symbol("▌ ");
+    let mut state = ListState::default();
+    state.select(Some(sel));
+    frame.render_stateful_widget(list, popup, &mut state);
 }
 
 /// Bloque estándar para overlays, con título resaltado.
@@ -1139,6 +1220,8 @@ fn draw_menu(frame: &mut Frame, app: &App, area: Rect, sel: usize) {
         "Exportar a Markdown (xietiao-export.md)",
         "Exportar datos a JSON (xietiao-export.json)",
         "Importar datos desde JSON (xietiao-import.json)",
+        "Conectar Todoist (token de API)",
+        "Sincronizar con Todoist",
     ];
     let items: Vec<ListItem> = options
         .iter()
